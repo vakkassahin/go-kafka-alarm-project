@@ -1,0 +1,6 @@
+kafka:
+  broker: "localhost:9092"
+  topic: "cpu_memory_metrics"
+
+logging:
+  level: "info"
