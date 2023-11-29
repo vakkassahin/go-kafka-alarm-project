@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand" // rand paketini ekleyin
 	"os"
 	"os/signal"
 	"syscall"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/Shopify/sarama"
 )
+
+// ... (diğer kodlar)
 
 func main() {
 	// Kafka broker'ına bağlan
