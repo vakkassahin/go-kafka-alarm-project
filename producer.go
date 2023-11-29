@@ -2,82 +2,64 @@ package main
 
 import (
 	"fmt"
-	"math/rand" // rand paketini ekleyin
+	"log"
+	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
+	"strconv"
 
 	"github.com/Shopify/sarama"
 )
 
-// ... (diğer kodlar)
-
-func main() {
-	// Kafka broker'ına bağlan
-	brokers := []string{"localhost:9092"} // Kafka broker adresi
+// ConnectProducer is a function that creates a connection to Kafka
+func ConnectProducer(brokersUrl []string) (sarama.SyncProducer, error) {
 	config := sarama.NewConfig()
-	producer, err := sarama.NewSyncProducer(brokers, config)
+	config.Producer.Return.Successes = true
+	config.Producer.RequiredAcks = sarama.WaitForAll
+	config.Producer.Retry.Max = 5
+	conn, err := sarama.NewSyncProducer(brokersUrl, config)
 	if err != nil {
-		fmt.Printf("Error creating Kafka producer: %v\n", err)
-		return
+		return nil, err
 	}
-	defer producer.Close()
-
-	// Kafka topic'i belirle
-	topic := "cpu_memory_metrics"
-
-	// Ctrl+C sinyalini dinle
-	sigterm := make(chan os.Signal, 1)
-	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
-
-	// Belirli aralıklarla sahte CPU ve bellek verileri üret
-	go produceMetrics(producer, topic)
-
-	// Kafka'dan mesajları tüket
-	consumer, err := sarama.NewConsumer(brokers, config)
-	if err != nil {
-		fmt.Printf("Error creating Kafka consumer: %v\n", err)
-		return
-	}
-	defer consumer.Close()
-
-	partitionConsumer, err := consumer.ConsumePartition(topic, 0, sarama.OffsetOldest)
-	if err != nil {
-		fmt.Printf("Error creating partition consumer: %v\n", err)
-		return
-	}
-	defer partitionConsumer.Close()
-
-	for {
-		select {
-		case msg := <-partitionConsumer.Messages():
-			// Mesajları işle
-			fmt.Printf("Received message: %s\n", msg.Value)
-		case <-sigterm:
-			// Uygulamayı kapat
-			fmt.Println("Terminating...")
-			return
-		}
-	}
+	return conn, nil
 }
 
-func produceMetrics(producer sarama.SyncProducer, topic string) {
-	for {
-		cpuUsage := 80 + randFloat(-5, 5) // Sahte CPU kullanımı
-		memoryUsage := 70 + randFloat(-3, 3) // Sahte bellek kullanımı
-
-		message := fmt.Sprintf("CPU Usage: %.2f%%, Memory Usage: %.2f%%", cpuUsage, memoryUsage)
-		// Kafka'ya mesajı gönder
-		producer.SendMessage(&sarama.ProducerMessage{
-			Topic: topic,
-			Value: sarama.StringEncoder(message),
-		})
-
-		time.Sleep(5 * time.Second) // 5 saniyede bir metrik üret
+// PushMessage is a function that sends a message to Kafka
+func PushMessage(conn sarama.SyncProducer, topic string, message string) error {
+	msg := &sarama.ProducerMessage{
+		Topic: topic,
+		Value: sarama.StringEncoder(message),
 	}
+	_, _, err := conn.SendMessage(msg)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func randFloat(min, max float64) float64 {
-	return min + rand.Float64()*(max-min)
+// GetCPUUsage is a function that returns the current CPU usage percentage
+func GetCPUUsage() (float64, error) {
+	file, err := os.Open("/proc/stat")
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	var user, nice, system, idle, iowait, irq, softirq, steal, guest, guestNice int
+	_, err = fmt.Fscanf(file, "cpu %d %d %d %d %d %d %d %d %d %d",
+		&user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal, &guest, &guestNice)
+	if err != nil {
+		return 0, err
+	}
+	total := user + nice + system + idle + iowait + irq + softirq + steal
+	usage := float64(total-idle) / float64(total) * 100
+	return usage, nil
 }
+
+// GetMemoryUsage is a function that returns the current memory usage percentage
+func GetMemoryUsage() (float64, error) {
+	file, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	var total, free, available, buffers, cached int
+	_, err = fmt.Fscanf(file, "MemTotal: %d kB\nMemFree: %d kB\nMemAvailable: %d kB\nBuffers: %d kB
